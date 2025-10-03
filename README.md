@@ -71,7 +71,7 @@ Go from this
 to this   
 ![New disk Order](assets/setup5.png)
 
-You may delete the USB drive. AFter that boot and go through the steps below.
+You may delete the USB drive. After that boot and go through the steps below.
 
 # Steps to run on startup on Alpine Linux VM
 
@@ -125,5 +125,11 @@ nano ~/.profile
 ```
 
 ![Profile file](assets/profile.png)
+
+## 5) Remove the user password
+
+```
+doas passwd -d username
+```
 
 ### After all the steps reboot and it should be working right!

@@ -58,10 +58,13 @@ void Play() {
       if (scanf("%d", &move) != 1) {
           while (getchar() != '\n');      // clear invalid input
           printf("\nInvalid move!\nPlease enter a valid number form 1 to 7: ");
+          fflush(stdout);
       } else if (move < 1 || move > COLS) {
           printf("\nInvalid move!\nPlease enter a valid number form 1 to 7: ");
+          fflush(stdout);
       } else if (!CheckMove(move, board)) {
           printf("\nInvalid move!\nThis column is full, choose another one: ");
+          fflush(stdout);
       } else {
           break;
       }

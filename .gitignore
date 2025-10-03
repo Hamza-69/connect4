@@ -1,0 +1,4 @@
+connect4
+board.o
+game.o
+main.o

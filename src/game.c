@@ -12,6 +12,7 @@ void PrintTurn(char lett, char** arr) {
   PrintIntro();
   PrintBoard(arr);
   printf("\nPlayer %c, choose a column (1-7): ", lett);
+  fflush(stdout);
 }
 
 char CheckWinner(char** arr) {

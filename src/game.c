@@ -16,6 +16,7 @@ void PrintTurn(char lett, char** arr) {
 }
 
 int chooseMode() {
+  system("clear"); 
   printf("Choose game mode:\n1. Player vs Player\n2. Player vs Easy Computer\n");
   printf("Enter your choice (1 or 2): ");
   fflush(stdout);

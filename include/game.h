@@ -8,5 +8,7 @@ void PrintIntro();
 void PrintTurn(char lett, char** arr);
 char CheckWinner(char** arr);
 void Play();
+int chooseMode();
+void PlayEasyBot();
 
 #endif

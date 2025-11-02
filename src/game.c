@@ -17,23 +17,42 @@ void PrintTurn(char lett, char** arr) {
 
 int chooseMode() {
   system("clear"); 
-  printf("Choose game mode:\n1. Player vs Player\n2. Player vs Easy Computer\n");
+  printf("Choose game mode:\n1. Player vs Player\n2. Player vs Computer\n");
   printf("Enter your choice (1 or 2): ");
   fflush(stdout);
-  int choice;
+  int mode;
   while (1) {
-    if (scanf("%d", &choice) != 1) {
+    if (scanf("%d", &mode) != 1) {
         while (getchar() != '\n');      // clear invalid input
         printf("Invalid input! Please enter 1 or 2: ");
         fflush(stdout);
-    } else if (choice != 1 && choice != 2) {
+    } else if (mode != 1 && mode != 2) {
         printf("Invalid choice! Please enter 1 or 2: ");
         fflush(stdout);
     } else {
         break;
     }
   }
-  return choice;
+
+  if (mode == 2) {
+    int difficulty;
+    printf("Choose difficulty:\n1. Easy\n2. Medium\nEnter your choice (1 or 2): ");
+    fflush(stdout);
+    while (1) {
+      if (scanf("%d", &difficulty) != 1) {
+        while (getchar() != '\n');
+        printf("Invalid input! Please enter 1 or 2: ");
+        fflush(stdout);
+      } else if (difficulty != 1 && difficulty != 2) {
+        printf("Invalid choice! Please enter 1 or 2: ");
+        fflush(stdout);
+      } else {
+        break;
+      }
+    }
+    return difficulty+1; // 2 for easy, 3 for medium
+  }
+  return mode; // 1 for PvP
 }
 
 char CheckWinner(char** arr) {
@@ -159,6 +178,115 @@ void PlayEasyBot() {
     }
   }
   system("clear"); 
+  PrintIntro();
+  PrintBoard(board);
+  printf("\nIt's a draw!\n");
+  free(board);
+}
+
+void PlayMediumBot() {
+  char** board = (char**) malloc(ROWS * sizeof(char*));
+  for (int i = 0; i < ROWS; i++) {
+    board[i] = (char*) malloc(COLS * sizeof(char));
+  }
+
+  SetupBoard(board);
+
+  printf("Medium Bot Complexity: O(COLS * ROWS) for win/block checks, O(COLS) for center preference\n");
+
+  for (int i = 0; i < ROWS * COLS; i++) {
+    char player = i % 2 == 0 ? 'A' : 'B';
+    PrintTurn(player, board);
+    int move = 0;
+
+    if (player == 'B') {
+      int found = 0;
+      for (int col = 1; col <= COLS; col++) {
+        if (CheckMove(col, board)) {
+          MakeMove(board, col, 'B');
+          if (CheckWinner(board) == 'B') {
+            move = col;
+            found = 1;
+          }
+          for (int r = 0; r < ROWS; r++) {
+            if (board[r][col-1] == 'B') {
+              board[r][col-1] = '.';
+              break;
+            }
+          }
+          if (found) break;
+        }
+      }
+      if (!found) {
+        for (int col = 1; col <= COLS; col++) {
+          if (CheckMove(col, board)) {
+            MakeMove(board, col, 'A');
+            if (CheckWinner(board) == 'A') {
+              move = col;
+              found = 1;
+            }
+            for (int r = 0; r < ROWS; r++) {
+              if (board[r][col-1] == 'A') {
+                board[r][col-1] = '.';
+                break;
+              }
+            }
+            if (found) break;
+          }
+        }
+      }
+      if (!found) {
+        int centers[] = {4, 3, 5, 2, 6, 1, 7};
+        for (int j = 0; j < COLS; j++) {
+          int col = centers[j];
+          if (CheckMove(col, board)) {
+            move = col;
+            found = 1;
+            break;
+          }
+        }
+      }
+      if (!found) {
+        for (int col = 1; col <= COLS; col++) {
+          if (CheckMove(col, board)) {
+            move = col;
+            break;
+          }
+        }
+      }
+      printf("Medium Bot chooses column %d\n", move);
+      fflush(stdout);
+    } else {
+      while (1) {
+        if (scanf("%d", &move) != 1) {
+          while (getchar() != '\n');
+          printf("\nInvalid move!\nPlease enter a valid number form 1 to 7: ");
+          fflush(stdout);
+        } else if (move < 1 || move > COLS) {
+          printf("\nInvalid move!\nPlease enter a valid number form 1 to 7: ");
+          fflush(stdout);
+        } else if (!CheckMove(move, board)) {
+          printf("\nInvalid move!\nThis column is full, choose another one: ");
+          fflush(stdout);
+        } else {
+          break;
+        }
+      }
+    }
+
+    MakeMove(board, move, player);
+    char winner = CheckWinner(board);
+
+    if (winner != '.' && winner == player) {
+      system("clear");
+      PrintIntro();
+      PrintBoard(board);
+      printf("\nPlayer %c wins!", player);
+      free(board);
+      return;
+    }
+  }
+  system("clear");
   PrintIntro();
   PrintBoard(board);
   printf("\nIt's a draw!\n");

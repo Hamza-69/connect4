@@ -6,5 +6,7 @@ int main() {
     Play();
     else if (mode == 2)
     PlayEasyBot();
+    else if (mode == 3)
+    PlayMediumBot();
     return 0;
 }

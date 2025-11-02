@@ -10,5 +10,6 @@ char CheckWinner(char** arr);
 void Play();
 int chooseMode();
 void PlayEasyBot();
+void PlayMediumBot()
 
 #endif

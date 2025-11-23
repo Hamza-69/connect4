@@ -80,7 +80,7 @@ void PrintTitle() {
     printf("/ /___/ /_/ / / / / / / /  __/ /__/ /_/__  __/\n");
     printf("\\____/\\____/_/ /_/_/ /_/\\___/\\___/\\__/  /_/   \n");
     printf(C_RST);
-    printf("        [ Created by Hamza El Rachdi ]\n\n");
+    printf("\n        [ Created by Tessera ]\n\n");
 }
 
 void PrintTurn(char lett, char** arr) {

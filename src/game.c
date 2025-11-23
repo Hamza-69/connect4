@@ -2,6 +2,7 @@
 #include "../include/board.h"
 #include <stdlib.h>
 #include <stdio.h>
+#include <../include/solver.h>
 
 void PrintIntro() {
   printf("Welcome to Connect Four!\nPlayer A: A\nPlayer B: B\n");
@@ -36,23 +37,44 @@ int chooseMode() {
 
   if (mode == 2) {
     int difficulty;
-    printf("Choose difficulty:\n1. Easy\n2. Medium\nEnter your choice (1 or 2): ");
+    printf("Choose difficulty:\n1. Easy\n2. Medium\n3. Hard\n"); // <--- UPDATED
+    printf("Enter your choice (1, 2, or 3): ");
     fflush(stdout);
     while (1) {
       if (scanf("%d", &difficulty) != 1) {
         while (getchar() != '\n');
-        printf("Invalid input! Please enter 1 or 2: ");
+        printf("Invalid input! Please enter 1, 2 or 3: ");
         fflush(stdout);
-      } else if (difficulty != 1 && difficulty != 2) {
-        printf("Invalid choice! Please enter 1 or 2: ");
+      } else if (difficulty < 1 || difficulty > 3) {
+        printf("Invalid choice! Please enter 1, 2 or 3: ");
         fflush(stdout);
       } else {
         break;
       }
     }
-    return difficulty+1; // 2 for easy, 3 for medium
+    return difficulty + 1; // 2=Easy, 3=Medium, 4=Hard
   }
-  return mode; // 1 for PvP
+  return mode;
+}
+
+char chooseStartingPlayer() {
+  printf("\nWho should start first?\n1. Player (You)\n2. Bot\n");
+  printf("Enter your choice (1 or 2): ");
+  fflush(stdout);
+  int choice;
+  while (1) {
+    if (scanf("%d", &choice) != 1) {
+      while (getchar() != '\n');
+      printf("Invalid input! Please enter 1 or 2: ");
+      fflush(stdout);
+    } else if (choice != 1 && choice != 2) {
+      printf("Invalid choice! Please enter 1 or 2: ");
+      fflush(stdout);
+    } else {
+      break;
+    }
+  }
+  return choice == 1 ? 'A' : 'B';
 }
 
 char CheckWinner(char** arr) {
@@ -129,7 +151,7 @@ void Play() {
   free(board);
 }
 
-void PlayEasyBot() {
+void PlayEasyBot(char startingPlayer) {
   char** board = (char**) malloc(ROWS * sizeof(char**));
   for (int i = 0; i<ROWS; i++) {
     board[i] = (char*) malloc(COLS*sizeof(char));
@@ -138,14 +160,37 @@ void PlayEasyBot() {
   SetupBoard(board);
 
   for (int i = 0; i< ROWS*COLS; i++) {
-    char player = i %2 ==0 ? 'A' : 'B';
+    char player = (i % 2 == 0) ? startingPlayer : (startingPlayer == 'A' ? 'B' : 'A');
     PrintTurn(player, board);
     int move = 0;
 
     if (player == 'B') {
-      do {
-        move = (rand() % 7) + 1;
-      } while (!CheckMove(move, board));
+      // First, check if opponent (player 'A') can win in next move and block it
+      int found_threat = 0;
+      for (int col = 1; col <= COLS; col++) {
+        if (CheckMove(col, board)) {
+          MakeMove(board, col, 'A');
+          if (CheckWinner(board) == 'A') {
+            move = col;
+            found_threat = 1;
+          }
+          // Undo the move
+          for (int r = 0; r < ROWS; r++) {
+            if (board[r][col-1] == 'A') {
+              board[r][col-1] = '.';
+              break;
+            }
+          }
+          if (found_threat) break;
+        }
+      }
+      
+      if (!found_threat) {
+        // No immediate threat, make random move
+        do {
+          move = (rand() % 7) + 1;
+        } while (!CheckMove(move, board));
+      }
       fflush(stdout);
     } else {
       while (1) {
@@ -184,7 +229,7 @@ void PlayEasyBot() {
   free(board);
 }
 
-void PlayMediumBot() {
+void PlayMediumBot(char startingPlayer) {
   char** board = (char**) malloc(ROWS * sizeof(char*));
   for (int i = 0; i < ROWS; i++) {
     board[i] = (char*) malloc(COLS * sizeof(char));
@@ -195,7 +240,7 @@ void PlayMediumBot() {
   printf("Medium Bot Complexity: O(COLS * ROWS) for win/block checks, O(COLS) for center preference\n");
 
   for (int i = 0; i < ROWS * COLS; i++) {
-    char player = i % 2 == 0 ? 'A' : 'B';
+    char player = (i % 2 == 0) ? startingPlayer : (startingPlayer == 'A' ? 'B' : 'A');
     PrintTurn(player, board);
     int move = 0;
 
@@ -290,5 +335,62 @@ void PlayMediumBot() {
   PrintIntro();
   PrintBoard(board);
   printf("\nIt's a draw!\n");
+  free(board);
+}
+
+void PlayHardBot(char startingPlayer) {
+  char** board = (char**) malloc(ROWS * sizeof(char*));
+  for (int i = 0; i < ROWS; i++) {
+    board[i] = (char*) malloc(COLS * sizeof(char));
+  }
+
+  SetupBoard(board);
+  InitSolver(); 
+
+  for (int i = 0; i < ROWS * COLS; i++) {
+    char player = (i % 2 == 0) ? startingPlayer : (startingPlayer == 'A' ? 'B' : 'A');
+    PrintTurn(player, board);
+    int move = 0;
+
+    if (player == 'B') {
+        move = GetSolverMove(board, 'B');
+        printf("Bot (Hard) chooses column %d\n", move);
+        fflush(stdout);
+    } else {
+      while (1) {
+        if (scanf("%d", &move) != 1) {
+            while (getchar() != '\n');      
+            printf("\nInvalid move! 1-7: ");
+            fflush(stdout);
+        } else if (move < 1 || move > COLS) {
+            printf("\nInvalid move! 1-7: ");
+            fflush(stdout);
+        } else if (!CheckMove(move, board)) {
+            printf("\nColumn full! Choose another: ");
+            fflush(stdout);
+        } else {
+            break;
+        }
+      } 
+    }
+    
+    MakeMove(board, move, player);
+    char winner = CheckWinner(board);
+
+    if (winner != '.' && winner == player) {
+      system("clear"); 
+      PrintIntro();
+      PrintBoard(board);
+      printf("\nPlayer %c wins!", player);
+      FreeSolver();
+      free(board);
+      return;
+    }
+  }
+  system("clear"); 
+  PrintIntro();
+  PrintBoard(board);
+  printf("\nIt's a draw!\n");
+  FreeSolver();
   free(board);
 }

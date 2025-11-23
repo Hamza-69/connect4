@@ -3,7 +3,7 @@ CC = gcc
 CFLAGS = -Wall -Wextra -std=c99 -Iinclude
 
 # Source files
-SRC = src/main.c src/board.c src/game.c
+SRC = src/main.c src/board.c src/game.c src/solver.c
 
 # Object files
 OBJ = $(SRC:.c=.o)

@@ -13,5 +13,7 @@ char chooseStartingPlayer();
 void PlayEasyBot(char startingPlayer);
 void PlayMediumBot(char startingPlayer);
 void PlayHardBot(char startingPlayer);
+void PlayNetworkServer();
+void PlayNetworkClient();
 
 #endif

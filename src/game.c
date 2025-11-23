@@ -5,6 +5,12 @@
 #include <../include/solver.h>
 #include <pthread.h>
 #include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+
+#define PORT 4444
+#define BUFFER_SIZE 1024
 
 // Threaded solver helper declarations and implementation (file scope).
 typedef struct {
@@ -89,17 +95,17 @@ void PrintTurn(char lett, char** arr) {
 
 int chooseMode() {
   system("clear"); 
-  printf("Choose game mode:\n1. Player vs Player\n2. Player vs Computer\n");
-  printf("Enter your choice (1 or 2): ");
+  printf("Choose game mode:\n1. Player vs Player\n2. Player vs Computer\n3. Network Multiplayer (LAN)\n");
+  printf("Enter your choice (1, 2 or 3): ");
   fflush(stdout);
   int mode;
   while (1) {
     if (scanf("%d", &mode) != 1) {
         while (getchar() != '\n');      // clear invalid input
-        printf("Invalid input! Please enter 1 or 2: ");
+        printf("Invalid input! Please enter 1, 2 or 3: ");
         fflush(stdout);
-    } else if (mode != 1 && mode != 2) {
-        printf("Invalid choice! Please enter 1 or 2: ");
+    } else if (mode < 1 || mode > 3) {
+        printf("Invalid choice! Please enter 1, 2 or 3: ");
         fflush(stdout);
     } else {
         break;
@@ -108,7 +114,7 @@ int chooseMode() {
 
   if (mode == 2) {
     int difficulty;
-    printf("Choose difficulty:\n1. Easy\n2. Medium\n3. Hard\n"); // <--- UPDATED
+    printf("Choose difficulty:\n1. Easy\n2. Medium\n3. Hard\n");
     printf("Enter your choice (1, 2, or 3): ");
     fflush(stdout);
     while (1) {
@@ -124,6 +130,24 @@ int chooseMode() {
       }
     }
     return difficulty + 1; // 2=Easy, 3=Medium, 4=Hard
+  } else if (mode == 3) {
+    int netMode;
+    printf("Network Mode:\n1. Host (Server)\n2. Join (Client)\n");
+    printf("Enter your choice (1 or 2): ");
+    fflush(stdout);
+    while (1) {
+        if (scanf("%d", &netMode) != 1) {
+            while (getchar() != '\n');
+            printf("Invalid input! Please enter 1 or 2: ");
+            fflush(stdout);
+        } else if (netMode != 1 && netMode != 2) {
+            printf("Invalid choice! Please enter 1 or 2: ");
+            fflush(stdout);
+        } else {
+            break;
+        }
+    }
+    return netMode == 1 ? 5 : 6; // 5=Server, 6=Client
   }
   return mode;
 }
@@ -418,8 +442,6 @@ void PlayHardBot(char startingPlayer) {
   SetupBoard(board);
   InitSolver();
 
-  
-
   for (int i = 0; i < ROWS * COLS; i++) {
     char player = (i % 2 == 0) ? startingPlayer : (startingPlayer == 'A' ? 'B' : 'A');
     PrintTurn(player, board);
@@ -466,4 +488,232 @@ void PlayHardBot(char startingPlayer) {
   printf("\nIt's a draw!\n");
   FreeSolver();
   free(board);
+}
+
+// ================= NETWORK MULTIPLAYER =================
+
+void PlayNetworkServer() {
+    int server_fd, client_fd;
+    struct sockaddr_in address;
+    int opt = 1;
+    socklen_t addrlen = sizeof(address);
+    char buffer[BUFFER_SIZE] = {0};
+
+    // 1. Create socket [Lecture 18]
+    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
+        perror("socket failed");
+        exit(EXIT_FAILURE);
+    }
+
+    // Optional: Allow port reuse
+    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt))) {
+        perror("setsockopt");
+        exit(EXIT_FAILURE);
+    }
+
+    // 2. Bind [Lecture 18]
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = INADDR_ANY; 
+    address.sin_port = htons(PORT);
+
+    if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
+        perror("bind failed");
+        exit(EXIT_FAILURE);
+    }
+
+    // 3. Listen [Lecture 18]
+    if (listen(server_fd, 1) < 0) {
+        perror("listen");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Waiting for opponent to join on port %d...\n", PORT);
+
+    // 4. Accept [Lecture 18]
+    if ((client_fd = accept(server_fd, (struct sockaddr *)&address, &addrlen)) < 0) {
+        perror("accept");
+        exit(EXIT_FAILURE);
+    }
+    printf("Opponent connected!\n");
+    sleep(1);
+
+    char** board = (char**) malloc(ROWS * sizeof(char*));
+    for (int i = 0; i < ROWS; i++) board[i] = (char*) malloc(COLS * sizeof(char));
+    SetupBoard(board);
+
+    // Server is always Player A
+    for (int i = 0; i < ROWS * COLS; i++) {
+        char player = (i % 2 == 0) ? 'A' : 'B';
+        int move = 0;
+
+        system("clear");
+        PrintIntro();
+        PrintBoard(board);
+
+        if (player == 'A') {
+            // Server's turn (You)
+            printf("\nYour turn (A). Choose column (1-7): ");
+            fflush(stdout);
+            while (1) {
+                if (scanf("%d", &move) != 1) {
+                    while (getchar() != '\n');
+                    printf("Invalid input! Enter 1-7: ");
+                    fflush(stdout);
+                } else if (move < 1 || move > COLS || !CheckMove(move, board)) {
+                    printf("Invalid move! Enter 1-7: ");
+                    fflush(stdout);
+                } else {
+                    break;
+                }
+            }
+            
+            // Send move to client [Lecture 18 write]
+            sprintf(buffer, "%d", move);
+            write(client_fd, buffer, strlen(buffer));
+
+        } else {
+            // Client's turn (Opponent)
+            printf("\nWaiting for Opponent (B)...\n");
+            fflush(stdout);
+            
+            // Read move from client [Lecture 18 read]
+            memset(buffer, 0, BUFFER_SIZE);
+            int valread = read(client_fd, buffer, BUFFER_SIZE);
+            if (valread <= 0) {
+                printf("Opponent disconnected.\n");
+                break;
+            }
+            move = atoi(buffer);
+        }
+
+        MakeMove(board, move, player);
+
+        if (CheckWinner(board) == player) {
+            system("clear");
+            PrintIntro();
+            PrintBoard(board);
+            printf("\nPlayer %c wins!\n", player);
+            close(client_fd);
+            close(server_fd);
+            free(board);
+            return;
+        }
+    }
+    
+    printf("\nIt's a draw!\n");
+    close(client_fd);
+    close(server_fd);
+    free(board);
+}
+
+void PlayNetworkClient() {
+    int sock = 0;
+    struct sockaddr_in serv_addr;
+    char buffer[BUFFER_SIZE] = {0};
+    char ip_str[100];
+
+    printf("Enter Server IP Address (press Enter for localhost/same machine): ");
+    fflush(stdout);
+    
+    // Clear any leftover input
+    while (getchar() != '\n');
+    
+    // Read IP address or use default
+    if (fgets(ip_str, sizeof(ip_str), stdin) == NULL || ip_str[0] == '\n') {
+        strcpy(ip_str, "127.0.0.1");
+        printf("Using default: 127.0.0.1 (localhost - same machine)\n");
+    } else {
+        // Remove trailing newline
+        ip_str[strcspn(ip_str, "\n")] = 0;
+    }
+
+    // 1. Create socket [Lecture 17]
+    if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+        printf("\n Socket creation error \n");
+        return;
+    }
+
+    memset(&serv_addr, 0, sizeof(serv_addr));
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_port = htons(PORT);
+
+    // Convert IP [Lecture 17]
+    if(inet_pton(AF_INET, ip_str, &serv_addr.sin_addr) <= 0) {
+        printf("\nInvalid address/ Address not supported \n");
+        return;
+    }
+
+    // 2. Connect [Lecture 17]
+    if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
+        printf("\nConnection Failed \n");
+        return;
+    }
+    printf("Connected to server!\n");
+    sleep(1);
+
+    char** board = (char**) malloc(ROWS * sizeof(char*));
+    for (int i = 0; i < ROWS; i++) board[i] = (char*) malloc(COLS * sizeof(char));
+    SetupBoard(board);
+
+    // Client is always Player B
+    for (int i = 0; i < ROWS * COLS; i++) {
+        char player = (i % 2 == 0) ? 'A' : 'B';
+        int move = 0;
+
+        system("clear");
+        PrintIntro();
+        PrintBoard(board);
+
+        if (player == 'B') {
+            // Client's turn (You)
+            printf("\nYour turn (B). Choose column (1-7): ");
+            fflush(stdout);
+            while (1) {
+                if (scanf("%d", &move) != 1) {
+                    while (getchar() != '\n');
+                    printf("Invalid input! Enter 1-7: ");
+                    fflush(stdout);
+                } else if (move < 1 || move > COLS || !CheckMove(move, board)) {
+                    printf("Invalid move! Enter 1-7: ");
+                    fflush(stdout);
+                } else {
+                    break;
+                }
+            }
+            
+            // Send move to server [Lecture 17 write]
+            sprintf(buffer, "%d", move);
+            write(sock, buffer, strlen(buffer));
+
+        } else {
+            // Server's turn (Opponent)
+            printf("\nWaiting for Opponent (A)...\n");
+            fflush(stdout);
+            
+            // Read move from server [Lecture 17 read]
+            memset(buffer, 0, BUFFER_SIZE);
+            int valread = read(sock, buffer, BUFFER_SIZE);
+            if (valread <= 0) {
+                printf("Server disconnected.\n");
+                break;
+            }
+            move = atoi(buffer);
+        }
+
+        MakeMove(board, move, player);
+
+        if (CheckWinner(board) == player) {
+            system("clear");
+            PrintIntro();
+            PrintBoard(board);
+            printf("\nPlayer %c wins!\n", player);
+            close(sock);
+            free(board);
+            return;
+        }
+    }
+    
+    printf("\nIt's a draw!\n");
+    close(sock);
+    free(board);
 }

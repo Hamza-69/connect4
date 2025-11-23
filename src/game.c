@@ -1,719 +1,408 @@
 #include "../include/game.h"
 #include "../include/board.h"
+#include "../include/solver.h"
 #include <stdlib.h>
 #include <stdio.h>
-#include <../include/solver.h>
 #include <pthread.h>
 #include <string.h>
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
+#include <sys/select.h>
+#include <ctype.h>
 
 #define PORT 4444
 #define BUFFER_SIZE 1024
 
-// Threaded solver helper declarations and implementation (file scope).
+// --- UI Colors ---
+#define C_RST  "\033[0m"
+#define C_RED  "\033[1;31m"
+#define C_YEL  "\033[1;33m"
+#define C_CYAN "\033[1;36m"
+#define C_GRN  "\033[1;32m"
+
+// --- Commands ---
+#define CMD_QUIT -100
+#define CMD_UNDO -101
+#define CMD_REDO -102
+
+// --- Solver Helper ---
 typedef struct {
-  char** board_copy;
-  char player;
+    char** board_copy;
+    char player;
 } SolverThreadArg;
 
 static void free_board_copy(char** b) {
-  if (!b) return;
-  for (int r = 0; r < ROWS; r++) {
-    if (b[r]) free(b[r]);
-  }
-  free(b);
+    if (!b) return;
+    for (int r = 0; r < ROWS; r++) if (b[r]) free(b[r]);
+    free(b);
 }
 
 static void* solver_thread_fn(void* v) {
-  SolverThreadArg* a = (SolverThreadArg*)v;
-  int* res = malloc(sizeof(int));
-  if (!res) {
+    SolverThreadArg* a = (SolverThreadArg*)v;
+    int* res = malloc(sizeof(int));
+    *res = GetSolverMove(a->board_copy, a->player);
     free_board_copy(a->board_copy);
     free(a);
-    return NULL;
-  }
-  *res = GetSolverMove(a->board_copy, a->player);
-  free_board_copy(a->board_copy);
-  free(a);
-  return (void*)res;
+    return (void*)res;
 }
 
 static int GetSolverMoveThreaded(char** board_src, char player) {
-  char** copy = (char**) malloc(ROWS * sizeof(char*));
-  if (!copy) return GetSolverMove(board_src, player);
-  for (int i = 0; i < ROWS; i++) {
-    copy[i] = (char*) malloc(COLS * sizeof(char));
-    if (!copy[i]) {
-      for (int j = 0; j < i; j++) free(copy[j]);
-      free(copy);
-      return GetSolverMove(board_src, player);
+    char** copy = (char**) malloc(ROWS * sizeof(char*));
+    for (int i = 0; i < ROWS; i++) {
+        copy[i] = (char*) malloc(COLS * sizeof(char));
+        memcpy(copy[i], board_src[i], COLS * sizeof(char));
     }
-    memcpy(copy[i], board_src[i], COLS * sizeof(char));
-  }
+    SolverThreadArg* arg = malloc(sizeof(SolverThreadArg));
+    arg->board_copy = copy;
+    arg->player = player;
 
-  SolverThreadArg* arg = malloc(sizeof(SolverThreadArg));
-  if (!arg) {
-    free_board_copy(copy);
-    return GetSolverMove(board_src, player);
-  }
-  arg->board_copy = copy;
-  arg->player = player;
+    pthread_t tid;
+    pthread_create(&tid, NULL, solver_thread_fn, arg);
+    printf(C_CYAN "Bot is thinking...\n" C_RST);
+    fflush(stdout);
 
-  pthread_t tid;
-  if (pthread_create(&tid, NULL, solver_thread_fn, arg) != 0) {
-    free_board_copy(copy);
-    free(arg);
-    return GetSolverMove(board_src, player);
-  }
-
-  printf("Bot is thinking...\n");
-  fflush(stdout);
-
-  void* thread_res = NULL;
-  if (pthread_join(tid, &thread_res) != 0) {
-    return GetSolverMove(board_src, player);
-  }
-
-  int move = thread_res ? *((int*)thread_res) : GetSolverMove(board_src, player);
-  if (thread_res) free(thread_res);
-  return move;
+    void* thread_res = NULL;
+    pthread_join(tid, &thread_res);
+    int move = thread_res ? *((int*)thread_res) : 1;
+    if (thread_res) free(thread_res);
+    return move;
 }
 
-void PrintIntro() {
-  printf("Welcome to Connect Four!\nPlayer A: A\nPlayer B: B\n");
+// --- UI Helpers ---
+
+void PrintTitle() {
+    printf("\033[H\033[J"); 
+    printf(C_CYAN);
+    printf("   ______                            _  __ __\n");
+    printf("  / ____/___  ____  ____  ___  _____/ /|/ // /\n");
+    printf(" / /   / __ \\/ __ \\/ __ \\/ _ \\/ ___/ __/ // /_\n");
+    printf("/ /___/ /_/ / / / / / / /  __/ /__/ /_/__  __/\n");
+    printf("\\____/\\____/_/ /_/_/ /_/\\___/\\___/\\__/  /_/   \n");
+    printf(C_RST);
+    printf("        [ Created by Hamza El Rachdi ]\n\n");
 }
 
 void PrintTurn(char lett, char** arr) {
-  system("clear"); 
-  PrintIntro();
-  PrintBoard(arr);
-  printf("\nPlayer %c, choose a column (1-7): ", lett);
-  fflush(stdout);
+    PrintBoard(arr);
+    if (lett == 'A') printf("\nPlayer " C_RED "A" C_RST "'s turn.");
+    else printf("\nPlayer " C_YEL "B" C_RST "'s turn.");
+    printf(" Col (1-7), 'u' undo, 'r' redo, 'q' quit: ");
+    fflush(stdout);
+}
+
+int AskPlayAgain() {
+    char buffer[100];
+    while(1) {
+        printf("\n" C_GRN "Game Over!" C_RST " Play again? (y/n): ");
+        if (!fgets(buffer, sizeof(buffer), stdin)) return 0; // EOF
+        
+        buffer[strcspn(buffer, "\n")] = 0; // Trim newline
+        if (strlen(buffer) == 0) continue;
+
+        char c = tolower(buffer[0]);
+        if (c == 'y') return 1;
+        if (c == 'n') return 0;
+        printf("Invalid input.");
+    }
+}
+
+int GetInputOrBack(int range_min, int range_max) {
+    char buffer[100];
+    while (1) {
+        if (!fgets(buffer, sizeof(buffer), stdin)) return -1;
+        buffer[strcspn(buffer, "\n")] = 0;
+        
+        // If empty (just enter), ignore or reprompt
+        if (strlen(buffer) == 0) continue; 
+        
+        if (tolower(buffer[0]) == 'b') return -1;
+        
+        char *endptr;
+        long val = strtol(buffer, &endptr, 10);
+        if (endptr == buffer || *endptr != '\0' || val < range_min || val > range_max) {
+            printf(C_RED "Invalid." C_RST " Enter %d-%d or 'b': ", range_min, range_max);
+        } else {
+            return (int)val;
+        }
+    }
+}
+
+int GetGameInput(int sock_fd, int is_network) {
+    char buffer[100];
+    while (1) {
+        if (!fgets(buffer, sizeof(buffer), stdin)) return 0;
+        buffer[strcspn(buffer, "\n")] = 0;
+        if (strlen(buffer) == 0) continue;
+
+        char c = tolower(buffer[0]);
+        if (c == 'q') return CMD_QUIT;
+        
+        if (!is_network) {
+            if (c == 'u') return CMD_UNDO;
+            if (c == 'r') return CMD_REDO;
+        }
+
+        char *endptr;
+        long val = strtol(buffer, &endptr, 10);
+        if (endptr == buffer || *endptr != '\0' || val < 1 || val > 7) {
+            if (is_network) printf("Invalid! 1-7 or 'q': ");
+            else printf("Invalid! 1-7, 'u', 'r', 'q': ");
+        } else {
+            return (int)val;
+        }
+    }
 }
 
 int chooseMode() {
-  system("clear"); 
-  printf("Choose game mode:\n1. Player vs Player\n2. Player vs Computer\n3. Network Multiplayer (LAN)\n");
-  printf("Enter your choice (1, 2 or 3): ");
-  fflush(stdout);
-  int mode;
-  while (1) {
-    if (scanf("%d", &mode) != 1) {
-        while (getchar() != '\n');      // clear invalid input
-        printf("Invalid input! Please enter 1, 2 or 3: ");
-        fflush(stdout);
-    } else if (mode < 1 || mode > 3) {
-        printf("Invalid choice! Please enter 1, 2 or 3: ");
-        fflush(stdout);
-    } else {
-        break;
-    }
-  }
+    while (1) {
+        PrintTitle();
+        printf(C_YEL "1." C_RST " Player vs Player\n");
+        printf(C_YEL "2." C_RST " Player vs Computer\n");
+        printf(C_YEL "3." C_RST " Network Multiplayer (LAN)\n");
+        printf(C_YEL "4." C_RST " Quit\n");
+        printf("\nEnter choice: ");
+        int mode = GetInputOrBack(1, 4);
+        if (mode == -1) continue; 
+        if (mode == 4) return -1;
+        if (mode == 1) return 1;
 
-  if (mode == 2) {
-    int difficulty;
-    printf("Choose difficulty:\n1. Easy\n2. Medium\n3. Hard\n");
-    printf("Enter your choice (1, 2, or 3): ");
-    fflush(stdout);
-    while (1) {
-      if (scanf("%d", &difficulty) != 1) {
-        while (getchar() != '\n');
-        printf("Invalid input! Please enter 1, 2 or 3: ");
-        fflush(stdout);
-      } else if (difficulty < 1 || difficulty > 3) {
-        printf("Invalid choice! Please enter 1, 2 or 3: ");
-        fflush(stdout);
-      } else {
-        break;
-      }
-    }
-    return difficulty + 1; // 2=Easy, 3=Medium, 4=Hard
-  } else if (mode == 3) {
-    int netMode;
-    printf("Network Mode:\n1. Host (Server)\n2. Join (Client)\n");
-    printf("Enter your choice (1 or 2): ");
-    fflush(stdout);
-    while (1) {
-        if (scanf("%d", &netMode) != 1) {
-            while (getchar() != '\n');
-            printf("Invalid input! Please enter 1 or 2: ");
-            fflush(stdout);
-        } else if (netMode != 1 && netMode != 2) {
-            printf("Invalid choice! Please enter 1 or 2: ");
-            fflush(stdout);
-        } else {
-            break;
+        if (mode == 2) {
+            printf("\nDifficulty:\n" C_YEL "1." C_RST " Easy\n" C_YEL "2." C_RST " Medium\n" C_YEL "3." C_RST " Hard\n" C_CYAN "('b' back)\n" C_RST "Choice: ");
+            int diff = GetInputOrBack(1, 3);
+            if (diff == -1) continue;
+            return diff + 1; 
+        } 
+        else if (mode == 3) {
+            printf("\nNetwork Mode:\n" C_YEL "1." C_RST " Host\n" C_YEL "2." C_RST " Join\n" C_CYAN "('b' back)\n" C_RST "Choice: ");
+            int net = GetInputOrBack(1, 2);
+            if (net == -1) continue;
+            return net == 1 ? 5 : 6; 
         }
     }
-    return netMode == 1 ? 5 : 6; // 5=Server, 6=Client
-  }
-  return mode;
 }
 
 char chooseStartingPlayer() {
-  printf("\nWho should start first?\n1. Player (You)\n2. Bot\n");
-  printf("Enter your choice (1 or 2): ");
-  fflush(stdout);
-  int choice;
-  while (1) {
-    if (scanf("%d", &choice) != 1) {
-      while (getchar() != '\n');
-      printf("Invalid input! Please enter 1 or 2: ");
-      fflush(stdout);
-    } else if (choice != 1 && choice != 2) {
-      printf("Invalid choice! Please enter 1 or 2: ");
-      fflush(stdout);
-    } else {
-      break;
-    }
-  }
-  return choice == 1 ? 'A' : 'B';
+    printf("\nWho starts?\n" C_YEL "1." C_RST " You\n" C_YEL "2." C_RST " Bot\n" C_CYAN "('b' back)\n" C_RST "Choice: ");
+    int c = GetInputOrBack(1, 2);
+    if (c == -1) return '0';
+    return c == 1 ? 'A' : 'B';
 }
 
 char CheckWinner(char** arr) {
-  for (int i = 0; i < ROWS; i++) {
-    for (int j = 0; j < COLS; j++) {
-        char p = arr[i][j];
-        if (p == '.') continue;
-
-        if (j + 3 < COLS &&
-            arr[i][j+1] == p && arr[i][j+2] == p && arr[i][j+3] == p)
-            return p;
-
-        if (i + 3 < ROWS &&
-            arr[i+1][j] == p && arr[i+2][j] == p && arr[i+3][j] == p)
-            return p;
-
-        if (i + 3 < ROWS && j + 3 < COLS &&
-            arr[i+1][j+1] == p && arr[i+2][j+2] == p && arr[i+3][j+3] == p)
-            return p;
-
-        if (i - 3 >= 0 && j + 3 < COLS &&
-            arr[i-1][j+1] == p && arr[i-2][j+2] == p && arr[i-3][j+3] == p)
-            return p;
-    }
-  }
-  return '.';
-}
-
-void Play() {
-  char** board = (char**) malloc(ROWS * sizeof(char**));
-  for (int i = 0; i<ROWS; i++) {
-    board[i] = (char*) malloc(COLS*sizeof(char));
-  }
-
-  SetupBoard(board);
-
-  for (int i = 0; i< ROWS*COLS; i++) {
-    char player = i %2 ==0 ? 'A' : 'B';
-    PrintTurn(player, board);
-    int move = 0;
-
-    while (1) {
-      if (scanf("%d", &move) != 1) {
-          while (getchar() != '\n');      // clear invalid input
-          printf("\nInvalid move!\nPlease enter a valid number form 1 to 7: ");
-          fflush(stdout);
-      } else if (move < 1 || move > COLS) {
-          printf("\nInvalid move!\nPlease enter a valid number form 1 to 7: ");
-          fflush(stdout);
-      } else if (!CheckMove(move, board)) {
-          printf("\nInvalid move!\nThis column is full, choose another one: ");
-          fflush(stdout);
-      } else {
-          break;
-      }
-    } 
-    
-    MakeMove(board, move, player);
-    char winner = CheckWinner(board);
-
-    if (winner != '.' && winner == player) {
-      system("clear"); 
-      PrintIntro();
-      PrintBoard(board);
-      printf("\nPlayer %c wins!", player);
-      free(board);
-      return;
-    }
-  }
-  system("clear"); 
-  PrintIntro();
-  PrintBoard(board);
-  printf("\nIt's a draw!\n");
-  free(board);
-}
-
-void PlayEasyBot(char startingPlayer) {
-  char** board = (char**) malloc(ROWS * sizeof(char**));
-  for (int i = 0; i<ROWS; i++) {
-    board[i] = (char*) malloc(COLS*sizeof(char));
-  }
-
-  SetupBoard(board);
-
-  for (int i = 0; i< ROWS*COLS; i++) {
-    char player = (i % 2 == 0) ? startingPlayer : (startingPlayer == 'A' ? 'B' : 'A');
-    PrintTurn(player, board);
-    int move = 0;
-
-    if (player == 'B') {
-      // First, check if opponent (player 'A') can win in next move and block it
-      int found_threat = 0;
-      for (int col = 1; col <= COLS; col++) {
-        if (CheckMove(col, board)) {
-          MakeMove(board, col, 'A');
-          if (CheckWinner(board) == 'A') {
-            move = col;
-            found_threat = 1;
-          }
-          // Undo the move
-          for (int r = 0; r < ROWS; r++) {
-            if (board[r][col-1] == 'A') {
-              board[r][col-1] = '.';
-              break;
-            }
-          }
-          if (found_threat) break;
-        }
-      }
-      
-      if (!found_threat) {
-        // No immediate threat, make random move
-        do {
-          move = (rand() % 7) + 1;
-        } while (!CheckMove(move, board));
-      }
-      fflush(stdout);
-    } else {
-      while (1) {
-        if (scanf("%d", &move) != 1) {
-            while (getchar() != '\n');      // clear invalid input
-            printf("\nInvalid move!\nPlease enter a valid number form 1 to 7: ");
-          fflush(stdout);
-      } else if (move < 1 || move > COLS) {
-          printf("\nInvalid move!\nPlease enter a valid number form 1 to 7: ");
-          fflush(stdout);
-      } else if (!CheckMove(move, board)) {
-          printf("\nInvalid move!\nThis column is full, choose another one: ");
-          fflush(stdout);
-      } else {
-          break;
-      }
-    } 
-    }
-    
-    MakeMove(board, move, player);
-    char winner = CheckWinner(board);
-
-    if (winner != '.' && winner == player) {
-      system("clear"); 
-      PrintIntro();
-      PrintBoard(board);
-      printf("\nPlayer %c wins!", player);
-      free(board);
-      return;
-    }
-  }
-  system("clear"); 
-  PrintIntro();
-  PrintBoard(board);
-  printf("\nIt's a draw!\n");
-  free(board);
-}
-
-void PlayMediumBot(char startingPlayer) {
-  char** board = (char**) malloc(ROWS * sizeof(char*));
-  for (int i = 0; i < ROWS; i++) {
-    board[i] = (char*) malloc(COLS * sizeof(char));
-  }
-
-  SetupBoard(board);
-
-  printf("Medium Bot Complexity: O(COLS * ROWS) for win/block checks, O(COLS) for center preference\n");
-
-  for (int i = 0; i < ROWS * COLS; i++) {
-    char player = (i % 2 == 0) ? startingPlayer : (startingPlayer == 'A' ? 'B' : 'A');
-    PrintTurn(player, board);
-    int move = 0;
-
-    if (player == 'B') {
-      int found = 0;
-      for (int col = 1; col <= COLS; col++) {
-        if (CheckMove(col, board)) {
-          MakeMove(board, col, 'B');
-          if (CheckWinner(board) == 'B') {
-            move = col;
-            found = 1;
-          }
-          for (int r = 0; r < ROWS; r++) {
-            if (board[r][col-1] == 'B') {
-              board[r][col-1] = '.';
-              break;
-            }
-          }
-          if (found) break;
-        }
-      }
-      if (!found) {
-        for (int col = 1; col <= COLS; col++) {
-          if (CheckMove(col, board)) {
-            MakeMove(board, col, 'A');
-            if (CheckWinner(board) == 'A') {
-              move = col;
-              found = 1;
-            }
-            for (int r = 0; r < ROWS; r++) {
-              if (board[r][col-1] == 'A') {
-                board[r][col-1] = '.';
-                break;
-              }
-            }
-            if (found) break;
-          }
-        }
-      }
-      if (!found) {
-        int centers[] = {4, 3, 5, 2, 6, 1, 7};
+    for (int i = 0; i < ROWS; i++) {
         for (int j = 0; j < COLS; j++) {
-          int col = centers[j];
-          if (CheckMove(col, board)) {
-            move = col;
-            found = 1;
-            break;
-          }
+            char p = arr[i][j];
+            if (p == '.') continue;
+            if (j + 3 < COLS && arr[i][j+1] == p && arr[i][j+2] == p && arr[i][j+3] == p) return p;
+            if (i + 3 < ROWS && arr[i+1][j] == p && arr[i+2][j] == p && arr[i+3][j] == p) return p;
+            if (i + 3 < ROWS && j + 3 < COLS && arr[i+1][j+1] == p && arr[i+2][j+2] == p && arr[i+3][j+3] == p) return p;
+            if (i - 3 >= 0 && j + 3 < COLS && arr[i-1][j+1] == p && arr[i-2][j+2] == p && arr[i-3][j+3] == p) return p;
         }
-      }
-      if (!found) {
-        for (int col = 1; col <= COLS; col++) {
-          if (CheckMove(col, board)) {
-            move = col;
-            break;
-          }
-        }
-      }
-      printf("Medium Bot chooses column %d\n", move);
-      fflush(stdout);
-    } else {
-      while (1) {
-        if (scanf("%d", &move) != 1) {
-          while (getchar() != '\n');
-          printf("\nInvalid move!\nPlease enter a valid number form 1 to 7: ");
-          fflush(stdout);
-        } else if (move < 1 || move > COLS) {
-          printf("\nInvalid move!\nPlease enter a valid number form 1 to 7: ");
-          fflush(stdout);
-        } else if (!CheckMove(move, board)) {
-          printf("\nInvalid move!\nThis column is full, choose another one: ");
-          fflush(stdout);
-        } else {
-          break;
-        }
-      }
     }
-
-    MakeMove(board, move, player);
-    char winner = CheckWinner(board);
-
-    if (winner != '.' && winner == player) {
-      system("clear");
-      PrintIntro();
-      PrintBoard(board);
-      printf("\nPlayer %c wins!", player);
-      free(board);
-      return;
-    }
-  }
-  system("clear");
-  PrintIntro();
-  PrintBoard(board);
-  printf("\nIt's a draw!\n");
-  free(board);
+    return '.';
 }
 
-void PlayHardBot(char startingPlayer) {
-  char** board = (char**) malloc(ROWS * sizeof(char*));
-  for (int i = 0; i < ROWS; i++) {
-    board[i] = (char*) malloc(COLS * sizeof(char));
-  }
-
-  SetupBoard(board);
-  InitSolver();
-
-  for (int i = 0; i < ROWS * COLS; i++) {
-    char player = (i % 2 == 0) ? startingPlayer : (startingPlayer == 'A' ? 'B' : 'A');
-    PrintTurn(player, board);
-    int move = 0;
-
-    if (player == 'B') {
-      move = GetSolverMoveThreaded(board, 'B');
-      printf("Bot (Hard) chooses column %d\n", move);
-      fflush(stdout);
-    } else {
-      while (1) {
-        if (scanf("%d", &move) != 1) {
-            while (getchar() != '\n');      
-            printf("\nInvalid move! 1-7: ");
-            fflush(stdout);
-        } else if (move < 1 || move > COLS) {
-            printf("\nInvalid move! 1-7: ");
-            fflush(stdout);
-        } else if (!CheckMove(move, board)) {
-            printf("\nColumn full! Choose another: ");
-            fflush(stdout);
-        } else {
-            break;
-        }
-      } 
-    }
-    
-    MakeMove(board, move, player);
-    char winner = CheckWinner(board);
-
-    if (winner != '.' && winner == player) {
-      system("clear"); 
-      PrintIntro();
-      PrintBoard(board);
-      printf("\nPlayer %c wins!", player);
-      FreeSolver();
-      free(board);
-      return;
-    }
-  }
-  system("clear"); 
-  PrintIntro();
-  PrintBoard(board);
-  printf("\nIt's a draw!\n");
-  FreeSolver();
-  free(board);
-}
-
-// ================= NETWORK MULTIPLAYER =================
-
-void PlayNetworkServer() {
-    int server_fd, client_fd;
-    struct sockaddr_in address;
-    int opt = 1;
-    socklen_t addrlen = sizeof(address);
-    char buffer[BUFFER_SIZE] = {0};
-
-    // 1. Create socket [Lecture 18]
-    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
-        perror("socket failed");
-        exit(EXIT_FAILURE);
-    }
-
-    // Optional: Allow port reuse
-    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt))) {
-        perror("setsockopt");
-        exit(EXIT_FAILURE);
-    }
-
-    // 2. Bind [Lecture 18]
-    address.sin_family = AF_INET;
-    address.sin_addr.s_addr = INADDR_ANY; 
-    address.sin_port = htons(PORT);
-
-    if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
-        perror("bind failed");
-        exit(EXIT_FAILURE);
-    }
-
-    // 3. Listen [Lecture 18]
-    if (listen(server_fd, 1) < 0) {
-        perror("listen");
-        exit(EXIT_FAILURE);
-    }
-
-    printf("Waiting for opponent to join on port %d...\n", PORT);
-
-    // 4. Accept [Lecture 18]
-    if ((client_fd = accept(server_fd, (struct sockaddr *)&address, &addrlen)) < 0) {
-        perror("accept");
-        exit(EXIT_FAILURE);
-    }
-    printf("Opponent connected!\n");
-    sleep(1);
-
+// --- Game Logic Internal ---
+void RunGameLoop(int mode, char startingPlayer, int sock_fd, int is_server) {
     char** board = (char**) malloc(ROWS * sizeof(char*));
-    for (int i = 0; i < ROWS; i++) board[i] = (char*) malloc(COLS * sizeof(char));
-    SetupBoard(board);
+    for (int i = 0; i<ROWS; i++) board[i] = (char*) malloc(COLS*sizeof(char));
+    char buffer[BUFFER_SIZE];
+    GameHistory history;
 
-    // Server is always Player A
-    for (int i = 0; i < ROWS * COLS; i++) {
-        char player = (i % 2 == 0) ? 'A' : 'B';
-        int move = 0;
+    do {
+        SetupBoard(board);
+        InitHistory(&history);
+        int gameOver = 0;
+        int userQuit = 0; // Flag to track if user pressed 'q'
+        if (mode == 4) InitSolver();
 
-        system("clear");
-        PrintIntro();
-        PrintBoard(board);
+        int currentTurnIndex = 0; 
+        
+        while (!gameOver) {
+            char player = ((currentTurnIndex % 2) == 0) ? startingPlayer : (startingPlayer == 'A' ? 'B' : 'A');
+            
+            // Check Draw
+            int full = 1;
+            for(int c=0; c<COLS; c++) if(CheckMove(c+1, board)) full=0;
+            if(full) {
+                PrintBoard(board); printf(C_GRN "\nIt's a Draw!\n" C_RST); break;
+            }
 
-        if (player == 'A') {
-            // Server's turn (You)
-            printf("\nYour turn (A). Choose column (1-7): ");
-            fflush(stdout);
-            while (1) {
-                if (scanf("%d", &move) != 1) {
-                    while (getchar() != '\n');
-                    printf("Invalid input! Enter 1-7: ");
-                    fflush(stdout);
-                } else if (move < 1 || move > COLS || !CheckMove(move, board)) {
-                    printf("Invalid move! Enter 1-7: ");
-                    fflush(stdout);
-                } else {
+            int move = 0;
+            int is_bot = (mode >= 2 && mode <= 4 && player == 'B');
+            int is_net = ((mode == 5 && player == 'B') || (mode == 6 && player == 'A'));
+
+            if (is_bot) {
+                PrintBoard(board);
+                if (mode == 2) { // Easy
+                    usleep(400000);
+                    do { move = (rand() % 7) + 1; } while (!CheckMove(move, board));
+                } else if (mode == 3) { // Medium
+                    usleep(400000);
+                    int found=0;
+                    for(int c=1; c<=7; c++) if(CheckMove(c,board)){ MakeMove(board,c,'B'); if(CheckWinner(board)=='B'){move=c; found=1;} RemovePiece(board,c); if(found)break; } 
+                    if(!found) for(int c=1; c<=7; c++) if(CheckMove(c,board)){ MakeMove(board,c,'A'); if(CheckWinner(board)=='A'){move=c; found=1;} RemovePiece(board,c); if(found)break; }
+                    if(!found) do { move = (rand() % 7) + 1; } while (!CheckMove(move, board));
+                } else { // Hard
+                    move = GetSolverMoveThreaded(board, 'B');
+                }
+                
+                RecordMove(&history, move);
+                AnimateDrop(board, move, player);
+                currentTurnIndex++;
+            } 
+            else if (is_net) {
+                PrintBoard(board);
+                printf(C_CYAN "\nWaiting for Opponent...\n" C_RST);
+                memset(buffer, 0, BUFFER_SIZE);
+                if (read(sock_fd, buffer, BUFFER_SIZE) <= 0) {
+                    printf(C_RED "\nConnection lost.\n" C_RST); gameOver = 1; break;
+                }
+                move = atoi(buffer);
+                RecordMove(&history, move);
+                AnimateDrop(board, move, player);
+                currentTurnIndex++;
+            } 
+            else {
+                // Local Human
+                PrintTurn(player, board);
+                int input = GetGameInput(sock_fd, (mode==5 || mode==6));
+                
+                if (input == CMD_QUIT) {
+                    gameOver = 1;
+                    userQuit = 1; 
+                    if(mode == 5 || mode == 6) close(sock_fd);
                     break;
                 }
+                else if (input == CMD_UNDO) {
+                    if (mode >= 2 && mode <= 4) {
+                        if (history.top >= 2) {
+                            PerformUndo(&history, board);
+                            PerformUndo(&history, board);
+                            currentTurnIndex -= 2;
+                            printf(C_YEL "Undone last round.\n" C_RST);
+                        } else {
+                            printf(C_RED "Cannot undo further.\n" C_RST); sleep(1);
+                        }
+                    } else {
+                        if (history.top > 0) {
+                            PerformUndo(&history, board);
+                            currentTurnIndex--;
+                        } else {
+                            printf(C_RED "Nothing to undo.\n" C_RST); sleep(1);
+                        }
+                    }
+                    continue;
+                }
+                else if (input == CMD_REDO) {
+                    if (mode >= 2 && mode <= 4) {
+                         if (history.redoTop > 0) {
+                             int m = PerformRedo(&history, board, player);
+                             if (m != -1) currentTurnIndex++;
+                         } else {
+                             printf(C_RED "Nothing to redo.\n" C_RST); sleep(1);
+                         }
+                    } else {
+                         if (history.redoTop > 0) {
+                            PerformRedo(&history, board, player);
+                            currentTurnIndex++;
+                        } else {
+                            printf(C_RED "Nothing to redo.\n" C_RST); sleep(1);
+                        }
+                    }
+                    continue;
+                }
+                else {
+                    if (!CheckMove(input, board)) {
+                         printf(C_RED "Column full!\n" C_RST); sleep(1); continue;
+                    }
+                    move = input;
+                    RecordMove(&history, move);
+                    if (mode == 5 || mode == 6) {
+                        sprintf(buffer, "%d", move);
+                        write(sock_fd, buffer, strlen(buffer));
+                    }
+                    AnimateDrop(board, move, player);
+                    currentTurnIndex++;
+                }
             }
-            
-            // Send move to client [Lecture 18 write]
-            sprintf(buffer, "%d", move);
-            write(client_fd, buffer, strlen(buffer));
 
-        } else {
-            // Client's turn (Opponent)
-            printf("\nWaiting for Opponent (B)...\n");
-            fflush(stdout);
-            
-            // Read move from client [Lecture 18 read]
-            memset(buffer, 0, BUFFER_SIZE);
-            int valread = read(client_fd, buffer, BUFFER_SIZE);
-            if (valread <= 0) {
-                printf("Opponent disconnected.\n");
-                break;
+            char winner = CheckWinner(board);
+            if (winner != '.') {
+                PrintBoard(board);
+                if (winner == 'A') printf("\n" C_RED "Player A Wins!\n" C_RST);
+                else printf("\n" C_YEL "Player B Wins!\n" C_RST);
+                gameOver = 1;
             }
-            move = atoi(buffer);
         }
 
-        MakeMove(board, move, player);
+        if (mode == 4) FreeSolver();
+        
+        // If user typed 'q', break loop immediately to go to menu
+        if (userQuit) break;
 
-        if (CheckWinner(board) == player) {
-            system("clear");
-            PrintIntro();
-            PrintBoard(board);
-            printf("\nPlayer %c wins!\n", player);
-            close(client_fd);
-            close(server_fd);
-            free(board);
-            return;
+        if (gameOver && AskPlayAgain() == 0) break;
+
+    } while (1);
+
+    for(int i=0;i<ROWS;i++) free(board[i]);
+    free(board);
+}
+
+void Play() { RunGameLoop(1, 'A', 0, 0); }
+void PlayEasyBot(char s) { RunGameLoop(2, s, 0, 0); }
+void PlayMediumBot(char s) { RunGameLoop(3, s, 0, 0); }
+void PlayHardBot(char s) { RunGameLoop(4, s, 0, 0); }
+
+void PlayNetworkServer() {
+    int s_fd, c_fd; struct sockaddr_in addr; int opt=1; socklen_t len=sizeof(addr);
+    if ((s_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) return;
+    setsockopt(s_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    addr.sin_family = AF_INET; addr.sin_addr.s_addr = INADDR_ANY; addr.sin_port = htons(PORT);
+    if (bind(s_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) return;
+    listen(s_fd, 1);
+    
+    PrintTitle();
+    printf(C_CYAN "Waiting for player on port %d...\n" C_RST, PORT);
+    printf(C_YEL "Press 'b' + Enter to cancel.\n" C_RST);
+
+    fd_set fds;
+    while(1) {
+        FD_ZERO(&fds); FD_SET(s_fd, &fds); FD_SET(STDIN_FILENO, &fds);
+        select(s_fd+1, &fds, NULL, NULL, NULL);
+        if(FD_ISSET(STDIN_FILENO, &fds)) { 
+            char b[10]; fgets(b,10,stdin); 
+            if(tolower(b[0])=='b') { close(s_fd); return; } 
+        }
+        if(FD_ISSET(s_fd, &fds)) {
+             if((c_fd = accept(s_fd, (struct sockaddr *)&addr, &len))>=0) break;
         }
     }
-    
-    printf("\nIt's a draw!\n");
-    close(client_fd);
-    close(server_fd);
-    free(board);
+    printf(C_GRN "Connected!\n" C_RST); sleep(1);
+    RunGameLoop(5, 'A', c_fd, 1);
+    close(c_fd); close(s_fd);
 }
 
 void PlayNetworkClient() {
-    int sock = 0;
-    struct sockaddr_in serv_addr;
-    char buffer[BUFFER_SIZE] = {0};
-    char ip_str[100];
-
-    printf("Enter Server IP Address (press Enter for localhost/same machine): ");
-    fflush(stdout);
+    int sock; struct sockaddr_in serv; char ip[50];
+    PrintTitle();
+    printf("Enter IP (empty=localhost)\n" C_CYAN "('b' back)\n" C_RST "IP: ");
     
-    // Clear any leftover input
-    while (getchar() != '\n');
+    if (!fgets(ip, 50, stdin)) return;
+    ip[strcspn(ip, "\n")] = 0;
+    if(tolower(ip[0])=='b') return;
+    if(strlen(ip)==0) strcpy(ip, "127.0.0.1");
     
-    // Read IP address or use default
-    if (fgets(ip_str, sizeof(ip_str), stdin) == NULL || ip_str[0] == '\n') {
-        strcpy(ip_str, "127.0.0.1");
-        printf("Using default: 127.0.0.1 (localhost - same machine)\n");
-    } else {
-        // Remove trailing newline
-        ip_str[strcspn(ip_str, "\n")] = 0;
-    }
-
-    // 1. Create socket [Lecture 17]
-    if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-        printf("\n Socket creation error \n");
-        return;
-    }
-
-    memset(&serv_addr, 0, sizeof(serv_addr));
-    serv_addr.sin_family = AF_INET;
-    serv_addr.sin_port = htons(PORT);
-
-    // Convert IP [Lecture 17]
-    if(inet_pton(AF_INET, ip_str, &serv_addr.sin_addr) <= 0) {
-        printf("\nInvalid address/ Address not supported \n");
-        return;
-    }
-
-    // 2. Connect [Lecture 17]
-    if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
-        printf("\nConnection Failed \n");
-        return;
-    }
-    printf("Connected to server!\n");
-    sleep(1);
-
-    char** board = (char**) malloc(ROWS * sizeof(char*));
-    for (int i = 0; i < ROWS; i++) board[i] = (char*) malloc(COLS * sizeof(char));
-    SetupBoard(board);
-
-    // Client is always Player B
-    for (int i = 0; i < ROWS * COLS; i++) {
-        char player = (i % 2 == 0) ? 'A' : 'B';
-        int move = 0;
-
-        system("clear");
-        PrintIntro();
-        PrintBoard(board);
-
-        if (player == 'B') {
-            // Client's turn (You)
-            printf("\nYour turn (B). Choose column (1-7): ");
-            fflush(stdout);
-            while (1) {
-                if (scanf("%d", &move) != 1) {
-                    while (getchar() != '\n');
-                    printf("Invalid input! Enter 1-7: ");
-                    fflush(stdout);
-                } else if (move < 1 || move > COLS || !CheckMove(move, board)) {
-                    printf("Invalid move! Enter 1-7: ");
-                    fflush(stdout);
-                } else {
-                    break;
-                }
-            }
-            
-            // Send move to server [Lecture 17 write]
-            sprintf(buffer, "%d", move);
-            write(sock, buffer, strlen(buffer));
-
-        } else {
-            // Server's turn (Opponent)
-            printf("\nWaiting for Opponent (A)...\n");
-            fflush(stdout);
-            
-            // Read move from server [Lecture 17 read]
-            memset(buffer, 0, BUFFER_SIZE);
-            int valread = read(sock, buffer, BUFFER_SIZE);
-            if (valread <= 0) {
-                printf("Server disconnected.\n");
-                break;
-            }
-            move = atoi(buffer);
-        }
-
-        MakeMove(board, move, player);
-
-        if (CheckWinner(board) == player) {
-            system("clear");
-            PrintIntro();
-            PrintBoard(board);
-            printf("\nPlayer %c wins!\n", player);
-            close(sock);
-            free(board);
-            return;
-        }
-    }
+    if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) return;
+    serv.sin_family = AF_INET; serv.sin_port = htons(PORT);
+    inet_pton(AF_INET, ip, &serv.sin_addr);
     
-    printf("\nIt's a draw!\n");
+    printf("Connecting..."); fflush(stdout);
+    if (connect(sock, (struct sockaddr *)&serv, sizeof(serv)) < 0) {
+        printf(C_RED " Failed.\n" C_RST); sleep(1); return;
+    }
+    printf(C_GRN " Connected!\n" C_RST); sleep(1);
+    RunGameLoop(6, 'A', sock, 0);
     close(sock);
-    free(board);
 }

@@ -3,6 +3,77 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <../include/solver.h>
+#include <pthread.h>
+#include <string.h>
+
+// Threaded solver helper declarations and implementation (file scope).
+typedef struct {
+  char** board_copy;
+  char player;
+} SolverThreadArg;
+
+static void free_board_copy(char** b) {
+  if (!b) return;
+  for (int r = 0; r < ROWS; r++) {
+    if (b[r]) free(b[r]);
+  }
+  free(b);
+}
+
+static void* solver_thread_fn(void* v) {
+  SolverThreadArg* a = (SolverThreadArg*)v;
+  int* res = malloc(sizeof(int));
+  if (!res) {
+    free_board_copy(a->board_copy);
+    free(a);
+    return NULL;
+  }
+  *res = GetSolverMove(a->board_copy, a->player);
+  free_board_copy(a->board_copy);
+  free(a);
+  return (void*)res;
+}
+
+static int GetSolverMoveThreaded(char** board_src, char player) {
+  char** copy = (char**) malloc(ROWS * sizeof(char*));
+  if (!copy) return GetSolverMove(board_src, player);
+  for (int i = 0; i < ROWS; i++) {
+    copy[i] = (char*) malloc(COLS * sizeof(char));
+    if (!copy[i]) {
+      for (int j = 0; j < i; j++) free(copy[j]);
+      free(copy);
+      return GetSolverMove(board_src, player);
+    }
+    memcpy(copy[i], board_src[i], COLS * sizeof(char));
+  }
+
+  SolverThreadArg* arg = malloc(sizeof(SolverThreadArg));
+  if (!arg) {
+    free_board_copy(copy);
+    return GetSolverMove(board_src, player);
+  }
+  arg->board_copy = copy;
+  arg->player = player;
+
+  pthread_t tid;
+  if (pthread_create(&tid, NULL, solver_thread_fn, arg) != 0) {
+    free_board_copy(copy);
+    free(arg);
+    return GetSolverMove(board_src, player);
+  }
+
+  printf("Bot is thinking...\n");
+  fflush(stdout);
+
+  void* thread_res = NULL;
+  if (pthread_join(tid, &thread_res) != 0) {
+    return GetSolverMove(board_src, player);
+  }
+
+  int move = thread_res ? *((int*)thread_res) : GetSolverMove(board_src, player);
+  if (thread_res) free(thread_res);
+  return move;
+}
 
 void PrintIntro() {
   printf("Welcome to Connect Four!\nPlayer A: A\nPlayer B: B\n");
@@ -345,7 +416,9 @@ void PlayHardBot(char startingPlayer) {
   }
 
   SetupBoard(board);
-  InitSolver(); 
+  InitSolver();
+
+  
 
   for (int i = 0; i < ROWS * COLS; i++) {
     char player = (i % 2 == 0) ? startingPlayer : (startingPlayer == 'A' ? 'B' : 'A');
@@ -353,9 +426,9 @@ void PlayHardBot(char startingPlayer) {
     int move = 0;
 
     if (player == 'B') {
-        move = GetSolverMove(board, 'B');
-        printf("Bot (Hard) chooses column %d\n", move);
-        fflush(stdout);
+      move = GetSolverMoveThreaded(board, 'B');
+      printf("Bot (Hard) chooses column %d\n", move);
+      fflush(stdout);
     } else {
       while (1) {
         if (scanf("%d", &move) != 1) {

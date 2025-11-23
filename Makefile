@@ -1,6 +1,6 @@
 # Compiler and flags
 CC = gcc
-CFLAGS = -Wall -Wextra -std=c99 -Iinclude
+CFLAGS = -Wall -Wextra -std=c99 -Iinclude -pthread
 
 # Source files
 SRC = src/main.c src/board.c src/game.c src/solver.c

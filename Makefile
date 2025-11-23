@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -std=c99 -D_POSIX_C_SOURCE=200809L -Iinclude -pthread
+CFLAGS = -Wall -Wextra -std=c99 -D_POSIX_C_SOURCE=200112L -D_XOPEN_SOURCE=600 -Iinclude -pthread
 SRC = src/main.c src/board.c src/game.c src/solver.c
 OBJ = $(SRC:.c=.o)
 TARGET = connect4

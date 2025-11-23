@@ -638,29 +638,29 @@ This project successfully delivered a complete Connect 4 implementation with pro
 
 #### Homepage and Mode Selection
 
-![Homepage](assets/homepage.png)
+![Homepage](assets/homepage.png)  
 *Main menu showing game mode options*
 
-![Bot Selection](assets/botchoice.png)
+![Bot Selection](assets/botchoice.png)  
 *Difficulty selection for bot opponents*
 
 #### Gameplay
 
-![First Move](assets/first.png)
+![First Move](assets/first.png)  
 *Initial gameplay showing the board*
 
-![Hard Bot](assets/hardbot.png)
+![Hard Bot](assets/hardbot.png)  
 *Playing against the hard difficulty bot*
 
 #### Network Multiplayer
 
-![Online Mode](assets/online.png)
+![Online Mode](assets/online.png)  
 *Network multiplayer setup*
 
-![Joining Server](assets/joiningserver.png)
+![Joining Server](assets/joiningserver.png)  
 *Connecting to a game server*
 
-![Exit Screen](assets/exit.png)
+![Exit Screen](assets/exit.png)  
 *Game exit confirmation*
 
 ---

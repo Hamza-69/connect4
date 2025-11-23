@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L
 #include "../include/game.h"
 #include "../include/board.h"
 #include "../include/solver.h"
@@ -128,7 +129,7 @@ int GetInputOrBack(int range_min, int range_max) {
     }
 }
 
-int GetGameInput(int sock_fd, int is_network) {
+int GetGameInput(int sock_fd __attribute__((unused)), int is_network) {
     char buffer[100];
     while (1) {
         if (!fgets(buffer, sizeof(buffer), stdin)) return 0;
@@ -204,7 +205,7 @@ char CheckWinner(char** arr) {
 }
 
 // --- Game Logic Internal ---
-void RunGameLoop(int mode, char startingPlayer, int sock_fd, int is_server) {
+void RunGameLoop(int mode, char startingPlayer, int sock_fd, int is_server __attribute__((unused))) {
     char** board = (char**) malloc(ROWS * sizeof(char*));
     for (int i = 0; i<ROWS; i++) board[i] = (char*) malloc(COLS*sizeof(char));
     char buffer[BUFFER_SIZE];
